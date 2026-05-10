@@ -5,6 +5,7 @@
 import initSqlJs from 'sql.js';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -53,9 +54,13 @@ function initializeSchema() {
       name TEXT NOT NULL,
       email TEXT NOT NULL,
       wallet_address TEXT,
+      api_key_hash TEXT UNIQUE,
+      api_key_prefix TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE INDEX IF NOT EXISTS idx_businesses_api_key_hash
+      ON businesses(api_key_hash);
 
     CREATE TABLE IF NOT EXISTS invoices (
       id TEXT PRIMARY KEY,
@@ -146,24 +151,61 @@ function firstRow(stmt) {
 
 // ============ Business Operations ============
 
+// API keys are stored as sha256 hashes. We keep a 12-char public prefix
+// (`sbk_xxxxxxxx`) so users can identify which key they're looking at
+// in logs, without exposing the secret.
+
+function hashApiKey(key) {
+  return crypto.createHash('sha256').update(key).digest('hex');
+}
+
+function generateApiKey() {
+  // 32 bytes → 64 hex chars, plus a brand prefix.
+  const secret = crypto.randomBytes(32).toString('hex');
+  const key = `sbk_${secret}`;
+  return { key, hash: hashApiKey(key), prefix: key.slice(0, 12) };
+}
+
+// createBusiness returns the business plus a one-time-visible apiKey.
+// The plaintext is only returned here; only the hash is persisted.
 export function createBusiness({ name, email, walletAddress }) {
   const id = crypto.randomUUID();
+  const { key, hash, prefix } = generateApiKey();
   db.run(
-    'INSERT INTO businesses (id, name, email, wallet_address) VALUES (?, ?, ?, ?)',
-    [id, name, email, walletAddress || null]
+    `INSERT INTO businesses (id, name, email, wallet_address, api_key_hash, api_key_prefix)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, name, email, walletAddress || null, hash, prefix]
   );
   saveDatabase();
-  return getBusiness(id);
+  const business = getBusiness(id);
+  return { ...business, apiKey: key };
 }
 
 export function getBusiness(id) {
-  const stmt = db.prepare('SELECT * FROM businesses WHERE id = ?');
+  const stmt = db.prepare(
+    `SELECT id, name, email, wallet_address, api_key_prefix, created_at, updated_at
+     FROM businesses WHERE id = ?`
+  );
   stmt.bind([id]);
   return firstRow(stmt);
 }
 
+export function getBusinessByApiKey(apiKey) {
+  if (!apiKey || typeof apiKey !== 'string') return null;
+  const hash = hashApiKey(apiKey);
+  const stmt = db.prepare(
+    `SELECT id, name, email, wallet_address, api_key_prefix, created_at, updated_at
+     FROM businesses WHERE api_key_hash = ?`
+  );
+  stmt.bind([hash]);
+  return firstRow(stmt);
+}
+
 export function listBusinesses() {
-  const stmt = db.prepare('SELECT * FROM businesses ORDER BY created_at DESC');
+  const stmt = db.prepare(
+    `SELECT id, name, email, wallet_address, api_key_prefix, created_at, updated_at
+     FROM businesses ORDER BY created_at DESC`
+  );
   stmt.bind([]);
   return rowsToObjects(stmt);
 }

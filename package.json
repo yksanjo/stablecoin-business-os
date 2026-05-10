@@ -1,22 +1,27 @@
 {
   "name": "stablecoin-business-os",
-  "version": "0.1.0",
-  "description": "The operating system for internet-native businesses — invoicing, payroll, treasury, and AI finance for stablecoins",
+  "version": "0.2.0",
+  "description": "Open-source toolkit for stablecoin-native business operations on Solana — invoicing, payroll, subscriptions, and statistical cashflow forecasting in USDC.",
   "main": "src/api/server.js",
   "type": "module",
   "scripts": {
     "dev": "node --watch src/api/server.js",
     "start": "node src/api/server.js",
-    "test": "node --test src/**/*.test.js"
+    "test": "node --test --experimental-test-coverage src/**/*.test.js",
+    "test:watch": "node --test --watch src/**/*.test.js"
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.5",
     "@solana/spl-token": "^0.4.0",
     "express": "^4.18.0",
+    "express-rate-limit": "^7.4.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.0",
     "uuid": "^9.0.0",
-    "sql.js": "^1.10.0"
+    "sql.js": "^1.10.0",
+    "zod": "^3.23.0"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "supertest": "^7.0.0"
+  }
 }
