@@ -1,228 +1,152 @@
-# ☀️ Stablecoin Business OS
+# Stablecoin Business Toolkit
 
-**The open-source operating system for internet-native businesses.**
+An open-source reference implementation of stablecoin-native business
+operations on Solana: invoicing, payroll, recurring billing, balance and
+transaction utilities, and a statistical cashflow forecaster — all
+denominated in USDC.
+
+This repository is a **technical reference and MVP**, not a hosted
+product. It is suitable for engineering teams evaluating how to build a
+USDC-native back-office layer, or as a starting point for a self-hosted
+deployment.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-25+-339933?logo=node.js)](https://nodejs.org)
-[![Solana](https://img.shields.io/badge/Solana-1.95-9945FF?logo=solana)](https://solana.com)
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen)](CONTRIBUTING.md)
-[![Twitter](https://img.shields.io/badge/Twitter-@yoshikondo-1DA1F2)](https://twitter.com/yoshikondo)
-
-Invoicing, payroll, subscriptions, treasury, and AI finance — all powered by **USDC on Solana**.
-
-> 🏗 **v0.1.0** — MVP stage. Ready for experimentation and contribution.
+[![Solana](https://img.shields.io/badge/Solana-Web3.js-9945FF?logo=solana)](https://solana.com)
 
 ---
 
-## 🎯 Why This Exists
+## Status
 
-The Solana ecosystem is evolving from *"fast chain for traders"* into **the internet's financial operating system.** Stablecoins are becoming the killer app for payments.
+| Item | Status |
+|---|---|
+| Reference implementation | Complete (v0.1.0 MVP) |
+| Persistent storage | In-memory SQLite (sql.js) — **not durable across restarts** |
+| Authentication / multi-tenancy | **Not implemented** — API is unauthenticated |
+| Rate limiting | **Not implemented** |
+| Test coverage | **Not implemented** |
+| Production deployment | **Not recommended** in current form |
 
-Existing tools are fragmented:
-- **Consumer DeFi** — Jupiter, Kamino, Marginfi (trading/lending, not business ops)
-- **Enterprise-only** — Circle, Paxos, Chainalysis (expensive, overkill for SMBs)
-- **Single-feature** — Helio (Shopify only), Sphere (API only, no AI)
+See "Production gaps" below for the full list of what would need to be
+built to take this to production.
 
-**Stablecoin Business OS** is the first unified, open-source platform for:
-- Freelancers getting paid in USDC
-- DAOs managing global payroll
-- Creator studios invoicing clients
-- Remote teams doing cross-border payments
+## What's in scope
 
----
+- **REST API** for businesses, invoices, payouts, and subscriptions.
+- **Solana client** — USDC balance lookup, unsigned-transfer construction,
+  transaction verification, address validation. Mainnet RPC by default.
+- **Statistical cashflow forecaster** — backward-looking SQL aggregates
+  with simple projection (subscriptions + pending invoices, less
+  pending payouts). **Not an LLM.** Earlier copy in this repo described
+  this as an "AI Finance Assistant"; it is statistical, not generative.
+- **SQLite schema** (sql.js) for businesses, invoices, payouts,
+  subscriptions, and transactions.
 
-## ✨ Features
+## What's out of scope
 
-### 💳 Invoicing
-- Create invoices in USDC
-- Send payment links to clients
-- Track paid / overdue / draft status
-- Record on-chain transaction signatures
+- **Custodial wallet operations.** This toolkit only constructs unsigned
+  transactions. Signing and submission are the caller's responsibility.
+- **KYC / AML / sanctions screening.** Required for any production
+  payments product. Not implemented.
+- **PCI / SOC 2 controls.** This is an MVP; production deployments must
+  add the surrounding compliance layer.
+- **Multi-tenant isolation.** Every API call trusts the caller's
+  `businessId` path parameter. There is no authentication.
+- **Settlement guarantees / chargeback handling.** USDC transfers are
+  final on-chain; off-chain dispute mechanisms are not modeled here.
 
-### 💸 Payroll
-- Pay team members in USDC
-- Support for any Solana wallet
-- Track pending and completed payouts
-- Full transaction ledger
+## Production gaps
 
-### 🔄 Subscriptions
-- Recurring billing (daily, weekly, monthly, yearly)
-- Automatic next-billing calculation
-- Active / paused / cancelled status
+Anything depending on this toolkit for real money must add at least:
 
-### 🤖 AI Finance Assistant
-- **Cashflow Forecasting** — Predict revenue 3-6 months ahead
-- **Financial Health Score** — Grade your business A-D
-- **Transaction Categorization** — Auto-sort expenses
-- **Smart Insights** — Actionable recommendations
+1. **Authentication and authorization.** Every endpoint is currently
+   open. Add per-business API keys or OAuth, and require ownership
+   checks on every resource.
+2. **Persistent database.** Replace `sql.js` (in-memory) with PostgreSQL
+   or another durable store. The current setup loses all state on
+   restart.
+3. **Rate limiting and abuse controls.** No request limits, no input
+   size limits.
+4. **Input validation.** Body validation is minimal. Add a schema
+   validator (Zod, AJV) on every endpoint.
+5. **Transaction signing infrastructure.** Decide whether you're
+   non-custodial (return unsigned txs to the user's wallet adapter,
+   current behavior) or custodial (HSM, MPC, KMS-backed signer).
+6. **KYC / AML / OFAC screening.** Mandatory in most jurisdictions for
+   any cross-border or business-account flow.
+7. **Audit logging.** No request audit trail today.
+8. **Test coverage.** No tests in this repository.
 
-### ⛓️ Solana Integration
-- Check USDC and SOL balances
-- Prepare unsigned USDC transfers
-- Verify on-chain transaction status
-- Validate wallet addresses
-
----
-
-## 🚀 Quick Start
-
-```bash
-# Clone the repo
-git clone https://github.com/yoshikondo/stablecoin-business-os.git
-cd stablecoin-business-os
-
-# Install dependencies
-npm install
-
-# Start the server
-npm run dev
-```
-
-Server starts at **http://localhost:3001**
-
-```bash
-# Check it's alive
-curl http://localhost:3001/api/health
-```
-
----
-
-## 📋 API Reference
-
-### Businesses
-```bash
-# Create a business
-curl -X POST http://localhost:3001/api/businesses \
-  -H "Content-Type: application/json" \
-  -d '{"name":"My Studio","email":"hello@studio.com"}'
-
-# List all businesses
-curl http://localhost:3001/api/businesses
-```
-
-### Invoices
-```bash
-# Create an invoice
-curl -X POST http://localhost:3001/api/businesses/:id/invoices \
-  -H "Content-Type: application/json" \
-  -d '{"clientName":"Client Inc.","amountUsdc":5000,"dueDate":"2026-06-01"}'
-
-# Mark as paid (with on-chain tx)
-curl -X POST http://localhost:3001/api/invoices/:id/pay \
-  -H "Content-Type: application/json" \
-  -d '{"txSignature":"5KtPn...wq3p"}'
-```
-
-### Payroll
-```bash
-# Create a payout
-curl -X POST http://localhost:3001/api/businesses/:id/payouts \
-  -H "Content-Type: application/json" \
-  -d '{"recipientName":"Yoshi","recipientWallet":"7EcDh...","amountUsdc":1500}'
-```
-
-### AI Finance
-```bash
-# Cashflow forecast
-curl http://localhost:3001/api/businesses/:id/ai/forecast?months=3
-
-# Financial health report
-curl http://localhost:3001/api/businesses/:id/ai/health
-
-# Categorize a transaction
-curl -X POST http://localhost:3001/api/ai/categorize \
-  -H "Content-Type: application/json" \
-  -d '{"description":"AWS hosting services"}'
-```
-
-### Solana
-```bash
-# Check wallet balance
-curl http://localhost:3001/api/wallet/:address/balance
-
-# Prepare USDC transfer (returns unsigned tx)
-curl -X POST http://localhost:3001/api/transfer/prepare \
-  -H "Content-Type: application/json" \
-  -d '{"sender":"...","recipient":"...","amountUsdc":100}'
-```
-
----
-
-## 🏗 Architecture
+## Architecture
 
 ```
 src/
 ├── api/
-│   └── server.js          # Express REST API (30+ endpoints)
+│   └── server.js          # Express REST API
 ├── services/
-│   └── database.js        # SQLite data layer (sql.js)
+│   └── database.js        # SQLite data layer (sql.js, in-memory)
 ├── solana/
-│   └── client.js          # Solana RPC + USDC operations
+│   └── client.js          # Solana RPC + USDC utilities
 └── ai/
-    └── assistant.js       # AI cashflow forecasting + insights
+    └── assistant.js       # Statistical cashflow forecaster
 ```
 
-**Stack:** Node.js 25+ · Express · SQLite (sql.js) · Solana Web3.js · SPL Token
+**Stack:** Node.js 18+, Express, sql.js, `@solana/web3.js`,
+`@solana/spl-token`.
 
----
+## Build and run
 
-## 📊 Competitive Landscape
+```bash
+git clone https://github.com/yksanjo/stablecoin-business-os.git
+cd stablecoin-business-os
+npm install
+npm run dev
+# Server listens on http://localhost:3001
+```
 
-| Company | Focus | Gap |
-|---------|-------|-----|
-| **Sphere** | Payments API | No AI, no payroll, no treasury |
-| **Helio** | Shopify payments | Shopify-only, no subscriptions |
-| **Circle** | Enterprise stablecoins | Expensive, not for SMBs |
-| **Request Finance** | Multi-chain invoicing | Not Solana-first, no AI |
-| **Bitwage** | Crypto payroll | Bitcoin-focused, not Solana |
-| **⬅️ This project** | **Unified business OS** | **First to combine all + AI** |
+Verify:
 
-[Full competitive research →](RESEARCH.md)
+```bash
+curl http://localhost:3001/api/health
+```
 
----
+## API surface
 
-## 🎯 Target Audience
+Selected endpoints (full list in `src/api/server.js`):
 
-1. **Creator economy** — AI music licensing, podcast monetization, cross-border royalties
-2. **Remote teams** — Global payroll in USDC, instant settlements
-3. **Solana-native businesses** — DAOs, protocols, NFT projects
-4. **SaaS companies** — Subscription billing in stablecoins
+```bash
+# Businesses
+POST /api/businesses
+GET  /api/businesses
+GET  /api/businesses/:id
+GET  /api/businesses/:id/dashboard
 
----
+# Invoices
+POST /api/businesses/:id/invoices
+GET  /api/businesses/:id/invoices
+POST /api/invoices/:id/pay        # records an on-chain tx signature
 
-## 🛣 Roadmap
+# Payouts
+POST /api/businesses/:id/payouts
 
-- [ ] **Web dashboard** — React frontend with charts
-- [ ] **Wallet adapter** — Phantom, Backpack, Solflare
-- [ ] **LLM-powered AI** — Natural language finance queries
-- [ ] **Multi-chain** — Base, Arbitrum, Polygon
-- [ ] **Fiat on/off ramps** — Jupiter, Circle API
-- [ ] **Tax exports** — CSV, QuickBooks, CoinTracker
-- [ ] **Dispute system** — Chargeback resolution for stablecoins
-- [ ] **Mobile app** — React Native
+# Subscriptions
+POST /api/businesses/:id/subscriptions
 
----
+# Forecasting (statistical, not generative)
+GET  /api/businesses/:id/ai/forecast?months=3
+GET  /api/businesses/:id/ai/health
 
-## 🤝 Contributing
+# Solana utilities
+GET  /api/wallet/:address/balance
+POST /api/transfer/prepare        # returns unsigned tx
+```
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+## License
 
-Ideas for first PRs:
-- Add a React dashboard
-- Integrate Phantom wallet
-- Add more AI insight types
-- Write tests
+MIT. See `LICENSE`.
 
----
+## Disclosures
 
-## 📄 License
-
-MIT © [Yoshi Kondo](https://github.com/yoshikondo)
-
----
-
-## ⭐ Support
-
-If this project is useful, **star the repo** and share it with Solana builders!
-
-[![Twitter](https://img.shields.io/badge/Follow-@yoshikondo-1DA1F2?style=social)](https://twitter.com/yoshikondo)
+This implementation was developed with assistance from AI coding tools.
+No portion of this repository should be considered production-ready or
+audited.
