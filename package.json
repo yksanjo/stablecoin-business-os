@@ -4,6 +4,27 @@
   "description": "Open-source toolkit for stablecoin-native business operations on Solana — invoicing, payroll, subscriptions, and statistical cashflow forecasting in USDC.",
   "main": "src/api/server.js",
   "type": "module",
+  "author": {
+    "name": "Yoshi Kondo",
+    "email": "yoshi@soundraw.co.jp",
+    "url": "https://github.com/yksanjo"
+  },
+  "contributors": [
+    {
+      "name": "Yoshi Kondo",
+      "email": "yoshi@soundraw.co.jp",
+      "url": "https://github.com/yksanjo"
+    },
+    {
+      "name": "Claude (Anthropic)",
+      "url": "https://claude.ai"
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yksanjo/stablecoin-business-os.git"
+  },
+  "license": "MIT",
   "scripts": {
     "dev": "node --watch src/api/server.js",
     "start": "node src/api/server.js",
