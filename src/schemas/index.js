@@ -62,3 +62,24 @@ export const verifyTransactionSchema = z.object({
 export const categorizeSchema = z.object({
   description: z.string().min(1).max(1024),
 });
+
+// v0.3.0 — delegated subscription billing
+export const authorizeSubscriptionSchema = z.object({
+  customerWallet: solanaAddress,
+  delegateWallet: solanaAddress,
+  treasuryWallet: solanaAddress,
+  totalAuthorizedUsdc: z.coerce.number().pipe(usdcAmount),
+});
+
+export const confirmAuthorizationSchema = z.object({
+  txSignature: z.string().min(64).max(128),
+});
+
+export const chargeSubscriptionSchema = z.object({
+  amountUsdc: z.coerce.number().pipe(usdcAmount),
+});
+
+export const recordChargeSchema = z.object({
+  amountUsdc: z.coerce.number().pipe(usdcAmount),
+  txSignature: z.string().min(64).max(128),
+});

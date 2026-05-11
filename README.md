@@ -11,10 +11,33 @@ Anthropic.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js)
 ![Solana](https://img.shields.io/badge/Solana-Web3.js-9945FF?logo=solana)
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
-![Tests](https://img.shields.io/badge/tests-21%20passing-brightgreen)
+![Version](https://img.shields.io/badge/version-0.3.0-blue)
+![Tests](https://img.shields.io/badge/tests-29%20passing-brightgreen)
 
 ---
+
+## What's new in v0.3.0
+
+**Delegated subscription billing.** v0.2 stored subscription
+schedules but had no on-chain pull mechanism — each billing cycle
+required the business to reissue an invoice. v0.3 closes that gap
+using the existing SPL Token primitives:
+
+1. Customer signs an SPL Token `Approve` granting the business an
+   allowance up to N × subscription amount.
+2. On each cycle, the business signs a delegated `TransferChecked`
+   that pulls one period's worth, drawing down the allowance.
+3. Customer can revoke at any time with `Revoke()`.
+
+No new on-chain program required — this uses Solana's
+battle-tested SPL Token delegation. The biller process (cron that
+calls `/charge/prepare` on each cycle) is the business's
+responsibility; the API exposes the building block.
+
+**Honest caveat:** this code constructs the correct Solana
+transactions and is unit-tested offline, but has not yet been
+validated against a live RPC. Run a devnet round-trip before
+relying on it in production.
 
 ## What's new in v0.2.0
 
@@ -138,6 +161,14 @@ GET    /api/businesses/:id/transactions
 GET    /api/businesses/:id/ai/forecast
 GET    /api/businesses/:id/ai/health
 
+# Subscription delegated billing (v0.3.0)
+POST   /api/subscriptions/:id/authorize/prepare    (returns Approve tx)
+POST   /api/subscriptions/:id/authorize/confirm    (record tx signature)
+GET    /api/subscriptions/:id/authorization        (state + on-chain)
+POST   /api/subscriptions/:id/charge/prepare       (returns Transfer tx)
+POST   /api/subscriptions/:id/charge/record        (record + decrement allowance)
+GET    /api/subscriptions/:id/authorize/revoke     (returns Revoke tx)
+
 # Public (rate-limited)
 GET    /api/health
 GET    /api/wallet/:address/balance       (Solana RPC)
@@ -161,8 +192,11 @@ src/
 ├── schemas/index.js       # zod schemas (one per body-taking route)
 ├── services/database.js   # sql.js — businesses, invoices, payouts,
 │                          #          subscriptions, transactions
-├── solana/client.js       # USDC balance, unsigned transfers,
-│                          #          tx verification
+├── solana/
+│   ├── client.js          # USDC balance, unsigned transfers,
+│   │                      #          tx verification
+│   └── subscriptions.js   # SPL Token Approve / TransferChecked /
+│                          #          Revoke for delegated billing (v0.3)
 ├── ai/assistant.js        # statistical cashflow forecaster + health
 └── __tests__/             # auth, validation, database tests
 ```
@@ -210,6 +244,10 @@ Covers:
   signature length).
 - Database layer (3 cases — signup returns one-time key, key lookup,
   hash is not exposed, uniqueness).
+- Subscription tx construction (8 cases — base-unit conversion,
+  Approve / Revoke / TransferChecked fee-payer correctness, invalid
+  Solana address rejection). Tests use an injected blockhash so they
+  stay offline; live-RPC validation is still required.
 
 Tests use the built-in `node:test` runner (no Jest / Mocha
 dependency).

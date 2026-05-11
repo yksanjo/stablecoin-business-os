@@ -275,6 +275,237 @@ app.get(
   }
 );
 
+// ============ Subscription Authorization (delegated billing) ============
+// v0.3.0: SPL Token Approve + delegated TransferChecked.
+// See src/solana/subscriptions.js for the on-chain model.
+
+let subscriptionsOps;
+
+// Returns an unsigned Approve transaction for the customer to sign.
+app.post(
+  '/api/subscriptions/:id/authorize/prepare',
+  authedLimiter,
+  (req, res, next) => requireBusinessAuth(businessOps)(req, res, next),
+  validate(schemas.authorizeSubscriptionSchema),
+  async (req, res) => {
+    try {
+      const subscription = businessOps.getSubscription(req.params.id);
+      if (!subscription || subscription.business_id !== req.business.id) {
+        return res.status(404).json({ error: 'Subscription not found' });
+      }
+      const { customerWallet, delegateWallet, treasuryWallet, totalAuthorizedUsdc } =
+        req.validated;
+
+      const tx = await subscriptionsOps.prepareAuthorizationTx({
+        customerAddress: customerWallet,
+        delegateAddress: delegateWallet,
+        totalAmountUsdc: totalAuthorizedUsdc,
+      });
+
+      const record = businessOps.createSubscriptionAuthorization({
+        subscriptionId: req.params.id,
+        customerWallet,
+        delegateWallet,
+        treasuryWallet,
+        totalAuthorizedUsdc,
+      });
+
+      res.json({
+        authorizationId: record.id,
+        message:
+          'Approve transaction ready. Customer must sign and submit, ' +
+          'then call /confirm with the tx signature.',
+        transaction: tx
+          .serialize({ requireAllSignatures: false })
+          .toString('base64'),
+        delegate: delegateWallet,
+        totalAuthorizedUsdc,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Customer (or business on their behalf) confirms the on-chain Approve
+// tx landed. Marks the authorization active.
+app.post(
+  '/api/subscriptions/:id/authorize/confirm',
+  authedLimiter,
+  (req, res, next) => requireBusinessAuth(businessOps)(req, res, next),
+  validate(schemas.confirmAuthorizationSchema),
+  async (req, res) => {
+    try {
+      const auth = businessOps.getAuthorizationForSubscription(req.params.id);
+      if (!auth) {
+        return res
+          .status(404)
+          .json({ error: 'No pending authorization for this subscription' });
+      }
+      const status = await solanaOps.verifyTransaction(req.validated.txSignature);
+      if (!status.confirmed) {
+        return res.status(400).json({
+          error: 'Transaction not confirmed yet',
+          status,
+        });
+      }
+      const updated = businessOps.markAuthorizationActive(
+        auth.id,
+        req.validated.txSignature
+      );
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Read the current authorization + on-chain state.
+app.get(
+  '/api/subscriptions/:id/authorization',
+  authedLimiter,
+  (req, res, next) => requireBusinessAuth(businessOps)(req, res, next),
+  async (req, res) => {
+    try {
+      const subscription = businessOps.getSubscription(req.params.id);
+      if (!subscription || subscription.business_id !== req.business.id) {
+        return res.status(404).json({ error: 'Subscription not found' });
+      }
+      const auth = businessOps.getAuthorizationForSubscription(req.params.id);
+      if (!auth) {
+        return res
+          .status(404)
+          .json({ error: 'No authorization for this subscription' });
+      }
+      const onChain = await subscriptionsOps.getAuthorizationState({
+        customerAddress: auth.customer_wallet,
+      });
+      res.json({ ...auth, onChain });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Construct an unsigned charge transaction. The business signs it as
+// the delegate and submits.
+app.post(
+  '/api/subscriptions/:id/charge/prepare',
+  authedLimiter,
+  (req, res, next) => requireBusinessAuth(businessOps)(req, res, next),
+  validate(schemas.chargeSubscriptionSchema),
+  async (req, res) => {
+    try {
+      const auth = businessOps.getAuthorizationForSubscription(req.params.id);
+      if (!auth || auth.status !== 'active') {
+        return res
+          .status(400)
+          .json({ error: 'No active authorization for this subscription' });
+      }
+      if (req.validated.amountUsdc > auth.remaining_authorized_usdc) {
+        return res.status(400).json({
+          error: 'Charge exceeds remaining authorized amount',
+          remainingAuthorizedUsdc: auth.remaining_authorized_usdc,
+        });
+      }
+
+      const tx = await subscriptionsOps.prepareChargeTx({
+        customerAddress: auth.customer_wallet,
+        delegateAddress: auth.delegate_wallet,
+        businessTreasuryAddress: auth.treasury_wallet,
+        amountUsdc: req.validated.amountUsdc,
+      });
+
+      res.json({
+        authorizationId: auth.id,
+        message:
+          'Charge transaction ready. Business (delegate) must sign and ' +
+          'submit, then call /charge/record with the tx signature.',
+        transaction: tx
+          .serialize({ requireAllSignatures: false })
+          .toString('base64'),
+        amountUsdc: req.validated.amountUsdc,
+        remainingAuthorizedUsdc: auth.remaining_authorized_usdc,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Record a completed charge against the authorization's remaining
+// allowance.
+app.post(
+  '/api/subscriptions/:id/charge/record',
+  authedLimiter,
+  (req, res, next) => requireBusinessAuth(businessOps)(req, res, next),
+  validate(schemas.recordChargeSchema),
+  async (req, res) => {
+    try {
+      const auth = businessOps.getAuthorizationForSubscription(req.params.id);
+      if (!auth) {
+        return res
+          .status(404)
+          .json({ error: 'No authorization for this subscription' });
+      }
+      const status = await solanaOps.verifyTransaction(req.validated.txSignature);
+      if (!status.confirmed) {
+        return res
+          .status(400)
+          .json({ error: 'Transaction not confirmed yet', status });
+      }
+      const updated = businessOps.recordCharge(
+        auth.id,
+        req.validated.amountUsdc,
+        req.validated.txSignature
+      );
+      businessOps.recordTransaction({
+        businessId: req.business.id,
+        type: 'subscription',
+        amountUsdc: req.validated.amountUsdc,
+        counterparty: auth.customer_wallet,
+        txSignature: req.validated.txSignature,
+        referenceType: 'subscription',
+        referenceId: req.params.id,
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Construct an unsigned Revoke tx the customer can sign to clear the
+// delegate authority.
+app.get(
+  '/api/subscriptions/:id/authorize/revoke',
+  authedLimiter,
+  (req, res, next) => requireBusinessAuth(businessOps)(req, res, next),
+  async (req, res) => {
+    try {
+      const auth = businessOps.getAuthorizationForSubscription(req.params.id);
+      if (!auth) {
+        return res
+          .status(404)
+          .json({ error: 'No authorization for this subscription' });
+      }
+      const tx = await subscriptionsOps.prepareRevokeTx({
+        customerAddress: auth.customer_wallet,
+      });
+      res.json({
+        authorizationId: auth.id,
+        message:
+          'Revoke transaction ready. Customer must sign and submit.',
+        transaction: tx
+          .serialize({ requireAllSignatures: false })
+          .toString('base64'),
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
 // ============ Transactions ============
 
 app.get(
@@ -428,6 +659,7 @@ export async function createApp() {
   businessOps = await import('../services/database.js');
   solanaOps = await import('../solana/client.js');
   aiOps = await import('../ai/assistant.js');
+  subscriptionsOps = await import('../solana/subscriptions.js');
   return app;
 }
 

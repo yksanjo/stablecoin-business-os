@@ -1,6 +1,6 @@
 {
   "name": "stablecoin-business-os",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Open-source toolkit for stablecoin-native business operations on Solana — invoicing, payroll, subscriptions, and statistical cashflow forecasting in USDC.",
   "main": "src/api/server.js",
   "type": "module",

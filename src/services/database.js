@@ -122,6 +122,25 @@ function initializeSchema() {
       FOREIGN KEY (business_id) REFERENCES businesses(id)
     );
 
+    CREATE TABLE IF NOT EXISTS subscription_authorizations (
+      id TEXT PRIMARY KEY,
+      subscription_id TEXT NOT NULL,
+      customer_wallet TEXT NOT NULL,
+      delegate_wallet TEXT NOT NULL,
+      treasury_wallet TEXT NOT NULL,
+      total_authorized_usdc REAL NOT NULL,
+      remaining_authorized_usdc REAL NOT NULL,
+      authorization_tx_signature TEXT,
+      last_charge_tx_signature TEXT,
+      last_charged_at TEXT,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'active', 'exhausted', 'revoked')),
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_subauth_subscription
+      ON subscription_authorizations(subscription_id);
+
     CREATE TABLE IF NOT EXISTS ai_insights (
       id TEXT PRIMARY KEY,
       business_id TEXT NOT NULL,
@@ -304,6 +323,93 @@ export function listSubscriptions(businessId) {
   const stmt = db.prepare('SELECT * FROM subscriptions WHERE business_id = ? ORDER BY created_at DESC');
   stmt.bind([businessId]);
   return rowsToObjects(stmt);
+}
+
+// ============ Subscription Authorization (v0.3.0 delegated billing) ============
+
+export function createSubscriptionAuthorization({
+  subscriptionId,
+  customerWallet,
+  delegateWallet,
+  treasuryWallet,
+  totalAuthorizedUsdc,
+}) {
+  const id = crypto.randomUUID();
+  db.run(
+    `INSERT INTO subscription_authorizations
+      (id, subscription_id, customer_wallet, delegate_wallet, treasury_wallet,
+       total_authorized_usdc, remaining_authorized_usdc, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+    [
+      id,
+      subscriptionId,
+      customerWallet,
+      delegateWallet,
+      treasuryWallet,
+      totalAuthorizedUsdc,
+      totalAuthorizedUsdc,
+    ]
+  );
+  saveDatabase();
+  return getSubscriptionAuthorization(id);
+}
+
+export function getSubscriptionAuthorization(id) {
+  const stmt = db.prepare(
+    'SELECT * FROM subscription_authorizations WHERE id = ?'
+  );
+  stmt.bind([id]);
+  return firstRow(stmt);
+}
+
+export function getAuthorizationForSubscription(subscriptionId) {
+  const stmt = db.prepare(
+    `SELECT * FROM subscription_authorizations
+     WHERE subscription_id = ? AND status IN ('pending', 'active')
+     ORDER BY created_at DESC LIMIT 1`
+  );
+  stmt.bind([subscriptionId]);
+  return firstRow(stmt);
+}
+
+export function markAuthorizationActive(id, txSignature) {
+  db.run(
+    `UPDATE subscription_authorizations
+     SET status = 'active', authorization_tx_signature = ?,
+         updated_at = datetime('now')
+     WHERE id = ?`,
+    [txSignature, id]
+  );
+  saveDatabase();
+  return getSubscriptionAuthorization(id);
+}
+
+export function recordCharge(id, amountUsdc, txSignature) {
+  const auth = getSubscriptionAuthorization(id);
+  if (!auth) throw new Error('Authorization not found');
+  const newRemaining = Math.max(0, auth.remaining_authorized_usdc - amountUsdc);
+  const newStatus = newRemaining === 0 ? 'exhausted' : 'active';
+  db.run(
+    `UPDATE subscription_authorizations
+     SET remaining_authorized_usdc = ?, status = ?,
+         last_charge_tx_signature = ?, last_charged_at = datetime('now'),
+         updated_at = datetime('now')
+     WHERE id = ?`,
+    [newRemaining, newStatus, txSignature, id]
+  );
+  saveDatabase();
+  return getSubscriptionAuthorization(id);
+}
+
+export function markAuthorizationRevoked(id) {
+  db.run(
+    `UPDATE subscription_authorizations
+     SET status = 'revoked', updated_at = datetime('now')
+     WHERE id = ?`,
+    [id]
+  );
+  saveDatabase();
+  return getSubscriptionAuthorization(id);
 }
 
 function calculateNextBilling(frequency) {
